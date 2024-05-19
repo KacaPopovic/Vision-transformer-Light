@@ -250,6 +250,7 @@ def main1():
 
 def train(model, device, train_loader, optimizer, criterion, epoch):
     model.train()
+    losses = 0
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -260,7 +261,8 @@ def train(model, device, train_loader, optimizer, criterion, epoch):
         if batch_idx % 100 == 0:
             print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)}'
                   f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
-    return loss.item()
+        losses += loss.item()
+    return losses/len(train_loader)/train_loader.batch_size
 
 def test(model, device, test_loader, criterion):
     model.eval()
@@ -312,7 +314,7 @@ def main():
     accuracy = []
 
     ## Train
-    for epoch in range(1, 5):
+    for epoch in range(1, 6):
         train_loss = train(model, device, train_loader, optimizer, criterion, epoch)
         correct, test_loss = test(model, device, test_loader, criterion)
         accuracy.append(100. * correct / len(test_loader.dataset))
@@ -320,9 +322,11 @@ def main():
         test_losses.append(test_loss)
 
     # Plot training loss
+    epochs = range(1, len(train_losses) + 1)
+
     plt.figure(figsize=(10, 5))
-    plt.plot(train_losses, label='Training loss')
-    plt.plot(test_losses, label='Test loss')
+    plt.plot(epochs, train_losses, label='Training loss')
+    plt.plot(epochs, test_losses, label='Test loss')
     plt.title(f'Loss with Final Accuracy: {accuracy[-1]:.2f}%')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
