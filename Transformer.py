@@ -1,9 +1,11 @@
 import torch.nn as nn
-import matplotlib.pyplot as plt
 from PIL import Image
-from torchvision import datasets, transforms
+from torchvision import transforms
 import torch
 import numpy as np
+import torch.nn.functional as F
+
+
 class LightViT(nn.Module):
 
     def __init__(self, image_dim, n_patches=7, n_blocks=2, d=8, n_heads=2, num_classes=10):
@@ -24,8 +26,9 @@ class LightViT(nn.Module):
         ## 2A) Learnable Parameter
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.d))
         ## 2B) Positional embedding
-        self.pos_embed = self.get_pos_embeddings(self.n_patches**2, self.d)
+        self.pos_embed = self.get_pos_embeddings(self.n_patches**2 + 1, self.d)
         ## 3) Encoder blocks
+        self.encoder = ViTEncoder(self.d, self.n_heads)
 
         # 5) Classification Head
         self.classifier = None
@@ -37,10 +40,15 @@ class LightViT(nn.Module):
         x = self.linear_map(self.patches)
 
         ## Add classification token
+        cls_token = self.cls_token
+        x = torch.cat((cls_token, x), dim=1)
 
         ## Add positional embeddings
+        pos_embed = self.pos_embed
+        x = x + pos_embed
 
         ## Pass through encoder
+        x = self.encoder(x)
 
         ## Get classification token
 
@@ -119,6 +127,79 @@ class CustomLinear(nn.Module):
         x = self.linear(x)
 
         return x
+
+class ViTEncoder(nn.Module):
+    def __init__(self, d_model, n_heads):
+        super(ViTEncoder, self).__init__()
+        self.hidden_d = d_model
+        self.n_heads = n_heads
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.mhsa = MHSA(d_model, n_heads)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model)
+        )
+
+    def forward(self, x):
+        attn_out = self.mhsa(self.norm1(x))
+        x = x + attn_out
+        mlp_out = self.mlp(self.norm2(x))
+        x = x + mlp_out
+
+        return x
+
+class MHSA(nn.Module):
+    def __init__(self, d, n_heads=2): # d: dimension of embedding spacr, n_head: dimension of attention heads
+        super(MHSA, self).__init__()
+        self.n_heads = n_heads
+        self.d = d
+        self.head_dim = d // n_heads
+
+        assert self.head_dim * n_heads == d, "Embedding dimension must be divisible by n_heads"
+
+        self.query = nn.Linear(d, d)
+        self.key = nn.Linear(d, d)
+        self.value = nn.Linear(d, d)
+        self.out = nn.Linear(d, d)
+
+    def forward(self,sequences):
+        # Sequences has shape (N, seq_length, token_dim)
+        # Shape is transformed to   (N, seq_length, n_heads, token_dim / n_heads)
+        # And finally we return back    (N, seq_length, item_dim)  (through concatenation)
+        N, seq_length, token_dim = sequences.shape
+
+        # Linear projections
+        Q = self.query(sequences)
+        K = self.key(sequences)
+        V = self.value(sequences)
+
+        # Split into multiple heads
+        Q = Q.view(N, seq_length, self.n_heads, self.head_dim)
+        K = K.view(N, seq_length, self.n_heads, self.head_dim)
+        V = V.view(N, seq_length, self.n_heads, self.head_dim)
+
+        # Permute to get shape (N, n_heads, seq_length, head_dim)
+        Q = Q.permute(0, 2, 1, 3)
+        K = K.permute(0, 2, 1, 3)
+        V = V.permute(0, 2, 1, 3)
+
+        # Scaled dot-product attention
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32))
+        attn = F.softmax(scores, dim=-1)
+        attn_output = torch.matmul(attn, V)
+
+        # Concatenate heads
+        attn_output = attn_output.permute(0, 2, 1, 3).contiguous()
+        attn_output = attn_output.view(N, seq_length, self.d)
+
+        # Final linear layer
+        output = self.out(attn_output)
+
+        return output
+
 
 
 def load_image(image_path):
