@@ -13,7 +13,7 @@ class LightViT(nn.Module):
     def __init__(self, image_dim, n_patches=7, n_blocks=2, d=8, n_heads=2, num_classes=10):
         super(LightViT, self).__init__()
 
-        ## Class Members
+        # Class Members
         self.image_dim = image_dim
         self.n_patches = n_patches
         self.n_blocks = n_blocks
@@ -22,50 +22,42 @@ class LightViT(nn.Module):
         self.num_classes = num_classes
         self.patches = None
 
-        ## 1B) Linear Mapping
         n, c, h, w = self.image_dim
-        self.linear_map = CustomLinear(self.n_patches, h, w, c, self.d) #P, H, W, C, d)
-        ## 2A) Learnable Parameter
+        self.linear_map = CustomLinear(self.n_patches, h, w, c, self.d)  # P, H, W, C, d)
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.d))
-        ## 2B) Positional embedding
-        self.pos_embed = self.get_pos_embeddings(self.n_patches**2 + 1, self.d)
-        ## 3) Encoder blocks
+        self.pos_embed = self.get_pos_embeddings(self.n_patches ** 2 + 1, self.d)
         self.encoder_layers = nn.ModuleList(
             [ViTEncoder(d_model=self.d, n_heads=self.n_heads) for _ in range(self.n_blocks)])
-
-        # 5) Classification Head
         self.classifier = nn.Sequential(
             nn.LayerNorm(self.d),
             nn.Linear(self.d, self.num_classes)
         )
 
     def forward(self, images):
-        ## Extract patches
+        # Extract patches
         n, c, h, w = images.shape
         self.patches = self.get_patches(images, self.n_patches)
         x = self.linear_map(self.patches)
 
-        ## Add classification token
+        # Add classification token
         cls_token = self.cls_token.expand(n, -1, -1)
         x = torch.cat((cls_token, x), dim=1)
 
-        ## Add positional embeddings
-        pos_embed = self.pos_embed.expand(n, -1, -1 )
+        # Add positional embeddings
+        pos_embed = self.pos_embed.expand(n, -1, -1)
         x = x + pos_embed
 
-        ## Pass through encoder
+        # Pass through encoder
         for layer in self.encoder_layers:
             x = layer(x)
 
-        ## Get classification token
-        cls_token_final = x[:,0]
+        # Get classification token
+        cls_token_final = x[:, 0]
 
-
-        ## Pass through classifier
+        # Pass through classifier
         out = self.classifier(cls_token_final)
 
         return out
-
 
     def get_patches(self, images, num_patches):
         """
@@ -73,7 +65,7 @@ class LightViT(nn.Module):
         In case of images, a sequence can be created through extracting patches.
         To do so, a crop window should be used with a defined window height and width.
         The dimension of data is originally in the format of (B,C,H,W),
-        when transorfmed into patches and then flattened we get (B, PxP, (HxC/P)x(WxC/P)),
+        when transformed into patches and then flattened we get (B, PxP, (HxC/P)x(WxC/P)),
         where B is the batch size and PxP is total number of patches in an image.
         In this example, you can set P=7.
         Output: A function that extracts image patches.
@@ -81,7 +73,7 @@ class LightViT(nn.Module):
         The function will be used inside LightViT class.
         """
         if len(images.shape) == 3:
-                images = images.unsqueeze(0)
+            images = images.unsqueeze(0)
 
         # Image Dimensions
         n, c, h, w = images.shape
@@ -95,8 +87,10 @@ class LightViT(nn.Module):
         patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
 
         # Flatten the last dimensions - The batch size, remains the same,
-        # but the data for each image (the color, height, width) is flattened into a single dimension–forming a long vector of pixel values.
-        # we have n images, devided into num_patches*num_patches patches, each of which has been flattened into  c * patch_h * patch_w dimensional vector
+        # but the data for each image (the color, height, width) is flattened
+        # into a single dimension–forming a long vector of pixel values.
+        # we have n images, divided into num_patches*num_patches patches,
+        # each of which has been flattened into  c * patch_h * patch_w dimensional vector
         patches = patches.view(n, -1, c * patch_h * patch_w)
 
         return patches
@@ -109,7 +103,6 @@ class LightViT(nn.Module):
         pos_embeddings[:, 1::2] = torch.cos(positions * div_term)
         pos_embeddings = pos_embeddings.unsqueeze(0)
         return pos_embeddings
-
 
 
 class CustomLinear(nn.Module):
@@ -139,6 +132,7 @@ class CustomLinear(nn.Module):
 
         return x
 
+
 class ViTEncoder(nn.Module):
     def __init__(self, d_model, n_heads):
         super(ViTEncoder, self).__init__()
@@ -162,8 +156,9 @@ class ViTEncoder(nn.Module):
 
         return x
 
+
 class MHSA(nn.Module):
-    def __init__(self, d, n_heads=2): # d: dimension of embedding spacr, n_head: dimension of attention heads
+    def __init__(self, d, n_heads=2):  # d: dimension of embedding spacr, n_head: dimension of attention heads
         super(MHSA, self).__init__()
         self.n_heads = n_heads
         self.d = d
@@ -176,7 +171,7 @@ class MHSA(nn.Module):
         self.value = nn.Linear(d, d)
         self.out = nn.Linear(d, d)
 
-    def forward(self,sequences):
+    def forward(self, sequences):
         # Sequences has shape (N, seq_length, token_dim)
         # Shape is transformed to   (N, seq_length, n_heads, token_dim / n_heads)
         # And finally we return back    (N, seq_length, item_dim)  (through concatenation)
@@ -212,41 +207,11 @@ class MHSA(nn.Module):
         return output
 
 
-
 def load_image(image_path):
     img_PIL = Image.open(image_path)
     img_tensor = transforms.ToTensor()(img_PIL)
     return img_tensor
 
-def main1():
-    # Define transformations for MNIST dataset
-    transform = transforms.Compose([
-        transforms.Resize((28, 28)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-    ])
-
-    # Load MNIST dataset
-    mnist_train = datasets.MNIST(root='.', train=True, transform=transform, download=True)
-    train_loader = DataLoader(mnist_train, batch_size=32, shuffle=True)
-
-    # Get a batch of images
-    images, labels = next(iter(train_loader))
-
-    # Initialize the model
-    model = LightViT(image_dim=images.shape)
-
-    # Perform forward pass
-    output = model(images)
-    print(output)
-    # Load image
-    img_tensor = load_image('img_1.jpg')
-    images = img_tensor
-    images = images.unsqueeze(0)
-    model = LightViT(image_dim=images.shape)
-    output = model(images)
-
-# Assuming the rest of your code (LightViT, CustomLinear, ViTEncoder, MHSA) is already defined above
 
 def train(model, device, train_loader, optimizer, criterion, epoch):
     model.train()
@@ -262,7 +227,8 @@ def train(model, device, train_loader, optimizer, criterion, epoch):
             print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)}'
                   f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
         losses += loss.item()
-    return losses/len(train_loader)/train_loader.batch_size
+    return losses / len(train_loader) / train_loader.batch_size
+
 
 def test(model, device, test_loader, criterion):
     model.eval()
@@ -283,12 +249,11 @@ def test(model, device, test_loader, criterion):
     return correct, test_loss
 
 
-
 def main():
     # Check for GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ## Define Dataloader
+    # Define Dataloader
     transform = transforms.Compose([
         transforms.Resize((28, 28)),
         transforms.ToTensor(),
@@ -300,20 +265,17 @@ def main():
     train_loader = DataLoader(mnist_train, batch_size=32, shuffle=True)
     test_loader = DataLoader(mnist_test, batch_size=32, shuffle=False)
 
-    ## Define Model
     model = LightViT(image_dim=(32, 1, 28, 28)).to(device)
 
-    ## Define Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.002)
 
-    ## Define Loss
     criterion = nn.CrossEntropyLoss()
 
     train_losses = []
     test_losses = []
     accuracy = []
 
-    ## Train
+    # Train
     for epoch in range(1, 6):
         train_loss = train(model, device, train_loader, optimizer, criterion, epoch)
         correct, test_loss = test(model, device, test_loader, criterion)
@@ -332,7 +294,6 @@ def main():
     plt.ylabel('Loss')
     plt.legend()
     plt.show()
-
 
 
 if __name__ == '__main__':
