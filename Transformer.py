@@ -1,9 +1,11 @@
 import torch.nn as nn
 from PIL import Image
-from torchvision import transforms
+from torchvision import transforms, datasets
 import torch
 import numpy as np
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 
 class LightViT(nn.Module):
@@ -28,33 +30,41 @@ class LightViT(nn.Module):
         ## 2B) Positional embedding
         self.pos_embed = self.get_pos_embeddings(self.n_patches**2 + 1, self.d)
         ## 3) Encoder blocks
-        self.encoder = ViTEncoder(self.d, self.n_heads)
+        self.encoder_layers = nn.ModuleList(
+            [ViTEncoder(d_model=self.d, n_heads=self.n_heads) for _ in range(self.n_blocks)])
 
         # 5) Classification Head
-        self.classifier = None
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(self.d),
+            nn.Linear(self.d, self.num_classes)
+        )
 
     def forward(self, images):
         ## Extract patches
-        n, c, h, w = self.image_dim
+        n, c, h, w = images.shape
         self.patches = self.get_patches(images, self.n_patches)
         x = self.linear_map(self.patches)
 
         ## Add classification token
-        cls_token = self.cls_token
+        cls_token = self.cls_token.expand(n, -1, -1)
         x = torch.cat((cls_token, x), dim=1)
 
         ## Add positional embeddings
-        pos_embed = self.pos_embed
+        pos_embed = self.pos_embed.expand(n, -1, -1 )
         x = x + pos_embed
 
         ## Pass through encoder
-        x = self.encoder(x)
+        for layer in self.encoder_layers:
+            x = layer(x)
 
         ## Get classification token
+        cls_token_final = x[:,0]
+
 
         ## Pass through classifier
+        out = self.classifier(cls_token_final)
 
-        return x
+        return out
 
 
     def get_patches(self, images, num_patches):
@@ -92,13 +102,14 @@ class LightViT(nn.Module):
         return patches
 
     def get_pos_embeddings(self, num_patches, d=8):
-        positions = torch.arange(0,num_patches, dtype=torch.float).unsqueeze(1)
+        positions = torch.arange(0, num_patches, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d, 2).float() * -(np.log(10000.0) / d))
         pos_embeddings = torch.empty(num_patches, d)
         pos_embeddings[:, 0::2] = torch.sin(positions * div_term)
         pos_embeddings[:, 1::2] = torch.cos(positions * div_term)
-        pos_embeddings = pos_embeddings.unsqueeze(0).transpose(0, 1)
+        pos_embeddings = pos_embeddings.unsqueeze(0)
         return pos_embeddings
+
 
 
 class CustomLinear(nn.Module):
@@ -207,14 +218,116 @@ def load_image(image_path):
     img_tensor = transforms.ToTensor()(img_PIL)
     return img_tensor
 
-def main():
+def main1():
+    # Define transformations for MNIST dataset
+    transform = transforms.Compose([
+        transforms.Resize((28, 28)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+
+    # Load MNIST dataset
+    mnist_train = datasets.MNIST(root='.', train=True, transform=transform, download=True)
+    train_loader = DataLoader(mnist_train, batch_size=32, shuffle=True)
+
+    # Get a batch of images
+    images, labels = next(iter(train_loader))
+
+    # Initialize the model
+    model = LightViT(image_dim=images.shape)
+
+    # Perform forward pass
+    output = model(images)
+    print(output)
     # Load image
     img_tensor = load_image('img_1.jpg')
     images = img_tensor
     images = images.unsqueeze(0)
     model = LightViT(image_dim=images.shape)
     output = model(images)
-    K=50
+
+# Assuming the rest of your code (LightViT, CustomLinear, ViTEncoder, MHSA) is already defined above
+
+def train(model, device, train_loader, optimizer, criterion, epoch):
+    model.train()
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+        if batch_idx % 100 == 0:
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)}'
+                  f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+    return loss.item()
+
+def test(model, device, test_loader, criterion):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += criterion(output, target).item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+    test_loss /= len(test_loader.dataset)
+
+    print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)}'
+          f'({100. * correct / len(test_loader.dataset):.0f}%)\n')
+    return correct, test_loss
+
+
+
+def main():
+    # Check for GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    ## Define Dataloader
+    transform = transforms.Compose([
+        transforms.Resize((28, 28)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    mnist_train = datasets.MNIST(root='.', train=True, transform=transform, download=True)
+    mnist_test = datasets.MNIST(root='.', train=False, transform=transform, download=True)
+
+    train_loader = DataLoader(mnist_train, batch_size=32, shuffle=True)
+    test_loader = DataLoader(mnist_test, batch_size=32, shuffle=False)
+
+    ## Define Model
+    model = LightViT(image_dim=(32, 1, 28, 28)).to(device)
+
+    ## Define Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.002)
+
+    ## Define Loss
+    criterion = nn.CrossEntropyLoss()
+
+    train_losses = []
+    test_losses = []
+    accuracy = []
+
+    ## Train
+    for epoch in range(1, 5):
+        train_loss = train(model, device, train_loader, optimizer, criterion, epoch)
+        correct, test_loss = test(model, device, test_loader, criterion)
+        accuracy.append(100. * correct / len(test_loader.dataset))
+        train_losses.append(train_loss)
+        test_losses.append(test_loss)
+
+    # Plot training loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Training loss')
+    plt.plot(test_losses, label='Test loss')
+    plt.title(f'Loss with Final Accuracy: {accuracy[-1]:.2f}%')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
 
 
 
