@@ -317,6 +317,10 @@ def main():
     test_loader = DataLoader(mnist_test, batch_size=32, shuffle=False)
 
     model = LightViT(image_dim=(32, 1, 28, 28)).to(device)
+    trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    non_trainable_parameters = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    print(f'The model has {trainable_parameters} trainable parameters')
+    print(f'The model has {non_trainable_parameters} non-trainable parameters')
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.002)
 
