@@ -248,6 +248,57 @@ def test(model, device, test_loader, criterion):
           f'({100. * correct / len(test_loader.dataset):.0f}%)\n')
     return correct, test_loss
 
+def train_with_hyperparameters(learning_rates, batch_sizes):
+    # Check for GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Define Dataloader
+    transform = transforms.Compose([
+        transforms.Resize((28, 28)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    fashion_mnist_train = datasets.FashionMNIST(root='.', train=True, transform=transform, download=True)
+    fashion_mnist_test = datasets.FashionMNIST(root='.', train=False, transform=transform, download=True)
+
+    # Initialize best accuracy as zero
+    best_acc = 0.0
+    best_model_state = None
+
+    for lr in learning_rates:
+        for bs in batch_sizes:
+            train_loader = DataLoader(fashion_mnist_train, batch_size=bs, shuffle=True)
+            test_loader = DataLoader(fashion_mnist_test, batch_size=bs, shuffle=False)
+            model = LightViT(image_dim=(32, 1, 28, 28)).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            criterion = nn.CrossEntropyLoss()
+            train_losses = []
+            test_losses = []
+            accuracy = []
+            # Train
+            for epoch in range(1, 6):
+                train_loss = train(model, device, train_loader, optimizer, criterion, epoch)
+                correct, test_loss = test(model, device, test_loader, criterion)
+                current_accuracy = 100. * correct / len(test_loader.dataset)
+                # Save this model if it has better accuracy
+                if current_accuracy > best_acc:
+                    best_acc = current_accuracy
+                    best_model_state = model.state_dict()
+                accuracy.append(current_accuracy)
+                train_losses.append(train_loss)
+                test_losses.append(test_loss)
+            # Plot training loss
+            epochs = range(1, len(train_losses) + 1)
+            plt.figure(figsize=(10, 5))
+            plt.plot(epochs, train_losses, label='Training loss')
+            plt.plot(epochs, test_losses, label='Test loss')
+            plt.title(f'Loss for LR={lr}, BS={bs} with Final Accuracy: {accuracy[-1]:.2f}%')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.legend()
+            plt.show()
+    print(f"Best Model Accuracy: {best_acc}%")
+    # Save the best model
+    torch.save(best_model_state, "best_model.pth")
 
 def main():
     # Check for GPU
@@ -297,4 +348,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    learning_rates = [0.001, 0.01, 0.1]
+    batch_sizes = [32, 64, 128]
+    train_with_hyperparameters(learning_rates, batch_sizes)
