@@ -9,7 +9,37 @@ import matplotlib.pyplot as plt
 
 
 class LightViT(nn.Module):
+    """
+    LightViT is a PyTorch module that implements a lightweight version of the Vision Transformer (ViT) model for image
+    classification tasks. It consists of an encoder composed of multiple ViTEncoder layers.
 
+    Args:
+        image_dim (tuple): The dimensions of the input images in the format (batch_size, channels, height, width).
+        n_patches (int): The number of patches to divide the images into. Default is 7.
+        n_blocks (int): The number of ViTEncoder blocks in the encoder. Default is 2.
+        d (int): The dimensionality of the model's hidden state. Default is 8.
+        n_heads (int): The number of attention heads in each ViTEncoder block. Default is 2.
+        num_classes (int): The number of output classes for classification. Default is 10.
+
+    Attributes:
+        image_dim (tuple): The dimensions of the input images.
+        n_patches (int): The number of patches.
+        n_blocks (int): The number of ViTEncoder blocks.
+        d (int): The dimensionality of the hidden state.
+        n_heads (int): The number of attention heads.
+        num_classes (int): The number of output classes.
+        patches (None): A placeholder attribute for storing the extracted image patches.
+        linear_map (CustomLinear): A custom linear layer for mapping the patches.
+        cls_token (nn.Parameter): The learnable classification token.
+        pos_embed (torch.Tensor): The positional embeddings for the patches.
+        encoder_layers (nn.ModuleList): The list of ViTEncoder layers.
+        classifier (nn.Sequential): The classifier module.
+
+    Methods:
+        forward(images): Performs forward pass of the LightViT model.
+        get_patches(images, num_patches): Function for extracting image patches.
+        get_pos_embeddings(num_patches, d): Generates the positional embeddings for the patches.
+    """
     def __init__(self, image_dim, n_patches=7, n_blocks=2, d=8, n_heads=2, num_classes=10):
         super(LightViT, self).__init__()
 
@@ -106,6 +136,24 @@ class LightViT(nn.Module):
 
 
 class CustomLinear(nn.Module):
+    """CustomLinear - Custom Linear Layer
+
+    This class implements a custom linear layer that performs the forward pass of a linear transformation on the input tensor.
+
+    Attributes:
+        P (int): Number of patches.
+        H (int): The height of the input tensor.
+        W (int): The width of the input tensor.
+        C (int): The number of channels in the input tensor.
+        d (int): The output dimension of the linear layer - dimension of hidden representation - embedding.
+        input_dim (int): The input feature dimension after flattening.
+        linear (nn.Linear): The linear layer that performs the linear transformation.
+
+    Methods:
+        forward(x):
+            Performs the forward pass of the linear transformation on the input tensor.
+
+    """
     def __init__(self, P, H, W, C, d):
         super(CustomLinear, self).__init__()
         self.P = P
@@ -134,6 +182,29 @@ class CustomLinear(nn.Module):
 
 
 class ViTEncoder(nn.Module):
+    """
+    ViTEncoder module that performs encoding using the Vision Transformer (ViT) architecture.
+
+    Args:
+        d_model (int): The number of features in the input and output (hidden size - embedding representation)
+        n_heads (int): The number of attention heads.
+
+    Attributes:
+        hidden_d (int): The size of the hidden dimensions.
+        n_heads (int): The number of attention heads.
+        norm1 (nn.LayerNorm): Layer normalization 1.
+        mhsa (MHSA): Multi-Head Self-Attention module.
+        norm2 (nn.LayerNorm): Layer normalization 2.
+        mlp (nn.Sequential): Multi-Layer Perceptron.
+
+    Methods:
+        forward(x): Performs the forward pass of the ViTEncoder module.
+
+    Example:
+        >>> model = ViTEncoder(d_model=512, n_heads=8)
+        >>> input_tensor = torch.randn(1, 3, 224, 224)
+        >>> output = model(input_tensor)
+    """
     def __init__(self, d_model, n_heads):
         super(ViTEncoder, self).__init__()
         self.hidden_d = d_model
@@ -158,6 +229,21 @@ class ViTEncoder(nn.Module):
 
 
 class MHSA(nn.Module):
+    """MHSA Class
+
+    Args:
+        d (int): Dimension of embedding space.
+        n_heads (int, optional): Dimension of attention heads. Defaults to 2.
+
+    Attributes:
+        n_heads (int): Dimension of attention heads.
+        d (int): Dimension of embedding space.
+        head_dim (int): Dimension of each head.
+
+    Methods:
+        forward(sequences): Performs forward pass of the MHSA module.
+
+    """
     def __init__(self, d, n_heads=2):  # d: dimension of embedding spacr, n_head: dimension of attention heads
         super(MHSA, self).__init__()
         self.n_heads = n_heads
@@ -208,12 +294,29 @@ class MHSA(nn.Module):
 
 
 def load_image(image_path):
+    """
+    Load an image from the specified image_path and convert it to a tensor.
+
+    :param image_path: The path to the image file.
+    :return: The image as a tensor.
+    """
     img_PIL = Image.open(image_path)
     img_tensor = transforms.ToTensor()(img_PIL)
     return img_tensor
 
 
 def train(model, device, train_loader, optimizer, criterion, epoch):
+    """
+    Train the model for one epoch.
+
+    :param model: The model to train.
+    :param device: The device to use for training.
+    :param train_loader: The data loader for training data.
+    :param optimizer: The optimizer to use for training.
+    :param criterion: The loss criterion to use.
+    :param epoch: The current epoch.
+    :return: The average loss per data point during training.
+    """
     model.train()
     losses = 0
     for batch_idx, (data, target) in enumerate(train_loader):
@@ -231,6 +334,20 @@ def train(model, device, train_loader, optimizer, criterion, epoch):
 
 
 def test(model, device, test_loader, criterion):
+    """
+    Calculate the test loss and accuracy for a given model.
+
+    :param model: The model to be tested.
+    :type model: torch.nn.Module
+    :param device: The device used for computation (e.g., "cpu", "cuda").
+    :type device: str
+    :param test_loader: The data loader containing the test dataset.
+    :type test_loader: torch.utils.data.DataLoader
+    :param criterion: The loss function used for evaluating the model's output.
+    :type criterion: torch.nn.modules.loss._Loss
+    :return: A tuple containing the correct predictions and the average test loss.
+    :rtype: tuple[int, float]
+    """
     model.eval()
     test_loss = 0
     correct = 0
@@ -249,6 +366,29 @@ def test(model, device, test_loader, criterion):
     return correct, test_loss
 
 def train_with_hyperparameters(learning_rates, batch_sizes):
+    """
+    :param learning_rates: List of learning rate values to be used during training.
+    :param batch_sizes: List of batch size values to be used during training.
+    :return: None
+
+    This method trains a model using different combinations of learning rates and batch sizes. It uses the FashionMNIST dataset for training and testing. The best model with the highest accuracy is saved as "best_model.pth".
+
+    The method follows these steps:
+
+    1. Checks if GPU is available and sets the device accordingly.
+    2. Defines the data transformations for the dataset.
+    3. Loads the FashionMNIST dataset for training and testing.
+    4. Initializes the best accuracy as 0.0 and the best model state as None.
+    5. Loops over each learning rate in the given learning_rates list and each batch size in the given batch_sizes list.
+    6. Sets up the data loaders for training and testing using the current batch size.
+    7. Initializes the model, optimizer, criterion, train losses, test losses, and accuracy.
+    8. Trains the model for 5 epochs, calculating the train loss and test loss for each epoch.
+    9. Calculates the current accuracy and saves the model state if the accuracy is higher than the best accuracy seen so far.
+    10. Appends the accuracy, train loss, and test loss to their respective lists.
+    11. Plots the training and test losses.
+    12. Prints the best model accuracy.
+    13. Saves the best model state as "best_model.pth".
+    """
     # Check for GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Define Dataloader
@@ -301,6 +441,11 @@ def train_with_hyperparameters(learning_rates, batch_sizes):
     torch.save(best_model_state, "best_model.pth")
 
 def main():
+    """
+    This is the main method for training and evaluating the LightViT model on the MNIST dataset.
+
+    :return: None
+    """
     # Check for GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
